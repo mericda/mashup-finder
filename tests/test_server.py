@@ -56,6 +56,7 @@ def test_tracks_no_blobs(seeded_db):
     for t in data["tracks"]:
         assert "waveform_colors" not in t
         assert "beats_blob" not in t
+    srv.shutdown()
 
 
 def test_tracks_search(seeded_db):

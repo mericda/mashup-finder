@@ -1335,8 +1335,9 @@ class MashupHandler(BaseHTTPRequestHandler):
             self._html(HTML_PAGE)
             return
 
-        conn = get_conn(self.db_path)
+        conn = None
         try:
+            conn = get_conn(self.db_path)
             if path == "/api/status":
                 self._json({"stage": "ready", "detail": "Ready"})
 
@@ -1398,7 +1399,7 @@ class MashupHandler(BaseHTTPRequestHandler):
                 match_types = params.get("match", [None])[0]
                 allowed = set(match_types.split(",")) if match_types else None
 
-                rows = conn.execute("""
+                sql = """
                     SELECT tp.*,
                         a.id a_id, a.name a_name, a.artist a_artist,
                         a.bpm a_bpm, a.camelot a_camelot,
@@ -1409,18 +1410,24 @@ class MashupHandler(BaseHTTPRequestHandler):
                     JOIN tracks a ON tp.track_a_id = a.id
                     JOIN tracks b ON tp.track_b_id = b.id
                     WHERE tp.score >= ?
-                    ORDER BY tp.score DESC
-                """, [min_score]).fetchall()
+                """
+                args = [min_score]
+                if q:
+                    sql += (" AND (LOWER(a.name) LIKE ? OR LOWER(a.artist) LIKE ?"
+                            " OR LOWER(b.name) LIKE ? OR LOWER(b.artist) LIKE ?)")
+                    args += [f"%{q}%"] * 4
+                if key:
+                    sql += " AND (a.camelot = ? OR b.camelot = ?)"
+                    args += [key, key]
+                if allowed:
+                    placeholders = ",".join("?" for _ in allowed)
+                    sql += f" AND tp.key_match IN ({placeholders})"
+                    args += list(allowed)
+                sql += " ORDER BY tp.score DESC"
 
+                all_rows = conn.execute(sql, args).fetchall()
                 results = []
-                for r in rows:
-                    if q and not any(q in (r[f] or "").lower()
-                                     for f in ["a_name", "a_artist", "b_name", "b_artist"]):
-                        continue
-                    if key and r["a_camelot"] != key and r["b_camelot"] != key:
-                        continue
-                    if allowed and r["key_match"] not in allowed:
-                        continue
+                for r in all_rows:
                     results.append({
                         "track_a": {"id": r["a_id"], "name": r["a_name"],
                                     "artist": r["a_artist"], "bpm": r["a_bpm"],
@@ -1465,8 +1472,11 @@ class MashupHandler(BaseHTTPRequestHandler):
 
             else:
                 self.send_error(404)
+        except ValueError as e:
+            self.send_error(400, str(e))
         finally:
-            conn.close()
+            if conn:
+                conn.close()
 
     def do_POST(self):
         if self.path == "/api/import":
