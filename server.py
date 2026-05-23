@@ -622,6 +622,15 @@ body.mode-top .panel-right { margin-left: 0; }
   .panel-left, .panel-right { margin: 0 0 10px 0; max-height: 50vh; }
   .wheel-container { flex-direction: column; align-items: center; }
 }
+.waveform-wrap { margin-top: 20px; }
+.waveform-label {
+  font-size: 11px; color: var(--text2); text-transform: uppercase;
+  letter-spacing: 0.5px; font-weight: 600; margin-bottom: 4px;
+}
+.waveform-canvas {
+  width: 100%; height: 64px; border-radius: 6px;
+  background: var(--surface2); display: block; margin-bottom: 12px;
+}
 </style>
 </head>
 <body>
@@ -1167,12 +1176,120 @@ function showDetailModal(trackA, trackB, p) {
     <div style="font-size:12px;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:8px">Score Breakdown</div>
     <div class="modal-bars">${barsHTML}</div>
     ${badgesHTML ? '<div class="modal-badges">' + badgesHTML + '</div>' : ''}
-  `;
+  <div class="waveform-wrap">
+    <div class="waveform-label">${esc(trackA.name)}</div>
+    <canvas id="waveformA" class="waveform-canvas" height="64"></canvas>
+    <div class="waveform-label">${esc(trackB.name)}</div>
+    <canvas id="waveformB" class="waveform-canvas" height="64"></canvas>
+  </div>
+`;
   document.getElementById('detailModal').style.display = 'flex';
+  loadWaveforms(trackA.id, trackB.id);
 }
 
 function closeModal() {
   document.getElementById('detailModal').style.display = 'none';
+}
+
+async function loadWaveforms(idA, idB) {
+  const [dataA, dataB] = await Promise.all([
+    api(`/api/tracks/${idA}/waveform`),
+    api(`/api/tracks/${idB}/waveform`),
+  ]);
+  renderWaveform('waveformA', dataA);
+  renderWaveform('waveformB', dataB);
+}
+
+function _b64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+async function _zlibDecompress(bytes) {
+  // Strip 2-byte zlib header, use raw deflate
+  const ds = new DecompressionStream('deflate-raw');
+  const writer = ds.writable.getWriter();
+  const reader = ds.readable.getReader();
+  const chunks = [];
+  const done = reader.read().then(function pump({ done, value }) {
+    if (done) return;
+    chunks.push(value);
+    return reader.read().then(pump);
+  });
+  writer.write(bytes.slice(2));
+  writer.close();
+  await done;
+  const total = chunks.reduce((n, c) => n + c.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.length; }
+  return out;
+}
+
+async function renderWaveform(canvasId, data) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const W = canvas.parentElement ? canvas.parentElement.clientWidth || 424 : 424;
+  const H = 64;
+  canvas.width = W;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = 'var(--surface2)';
+  ctx.fillRect(0, 0, W, H);
+
+  if (!data.waveform_colors) return;
+  let colorBytes, ampBytes;
+  try { colorBytes = await _zlibDecompress(_b64ToBytes(data.waveform_colors)); } catch(e) { return; }
+  try { ampBytes = await _zlibDecompress(_b64ToBytes(data.waveform_low)); } catch(e) {}
+
+  const nColor = colorBytes.length >> 1;
+  const nAmp = ampBytes ? (ampBytes.length >> 1) : 0;
+  let maxAmp = 0;
+  if (nAmp > 0) {
+    for (let i = 0; i < nAmp; i++) {
+      const v = ((ampBytes[i*2] << 8) | ampBytes[i*2+1]);
+      if (v > maxAmp) maxAmp = v;
+    }
+  }
+
+  for (let x = 0; x < W; x++) {
+    const ci = Math.floor(x / W * nColor);
+    const hi = colorBytes[ci * 2], lo = colorBytes[ci * 2 + 1];
+    const rgb = (hi << 8) | lo;
+    const r = ((rgb >> 11) & 0x1F) << 3;
+    const g = ((rgb >> 5) & 0x3F) << 2;
+    const b = (rgb & 0x1F) << 3;
+
+    let barH = H * 0.5;
+    if (nAmp > 0 && maxAmp > 0) {
+      const ai = Math.floor(x / W * nAmp);
+      const amp = ((ampBytes[ai*2] << 8) | ampBytes[ai*2+1]) / maxAmp;
+      barH = Math.max(2, amp * H);
+    }
+    const y0 = (H - barH) / 2;
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    ctx.fillRect(x, y0, 1, barH);
+  }
+
+  // Beat tick marks
+  if (data.beats) {
+    try {
+      const beatBytes = await _zlibDecompress(_b64ToBytes(data.beats));
+      const view = new DataView(beatBytes.buffer);
+      const nBeats = beatBytes.length >> 2;
+      if (nBeats > 1) {
+        const lastBeat = view.getFloat32((nBeats - 1) * 4, false);
+        ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+        ctx.lineWidth = 1;
+        for (let i = 0; i < nBeats; i++) {
+          const t = view.getFloat32(i * 4, false);
+          const x = Math.floor(t / lastBeat * W);
+          ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+        }
+      }
+    } catch(e) {}
+  }
 }
 
 // --- Track selection ---
