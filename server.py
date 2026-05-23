@@ -633,6 +633,8 @@ body.mode-top .panel-right { margin-left: 0; }
     <button class="mode-tab" data-mode="top" onclick="setMode('top')">Top Matches</button>
   </div>
   <div class="badge"><span id="trackCount">...</span> tracks loaded</div>
+  <button id="importBtn" onclick="triggerImport()" style="margin-left:auto;padding:6px 14px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text2);font-size:12px;font-weight:600;cursor:pointer;transition:border-color 0.15s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">↻ Import</button>
+  <div id="importStatus" style="font-size:12px;color:var(--text2);display:none;white-space:nowrap"></div>
 </div>
 
 <div class="modal-backdrop" id="detailModal" style="display:none" onclick="if(event.target===this)closeModal()">
@@ -1019,6 +1021,7 @@ function pairHTML(p, top, idx) {
   if (warns.includes('tuning')) detailHTML += `<span class="badge-warn">TUNE Δ${p.tuning_diff}Hz</span>`;
   if (warns.includes('energy')) detailHTML += `<span class="badge-warn">NRG Δ${p.energy_diff}dB</span>`;
   else if (p.energy_diff !== undefined && p.energy_diff <= 3) detailHTML += `<span class="badge-good">NRG ≈</span>`;
+  if (warns.includes('variable_bpm')) detailHTML += '<span class="badge-warn">VAR BPM</span>';
   return `<div class="pair-card" style="top:${top}px" onclick="selectTrack(${t.id})">
     <div class="pair-score ${scoreClass}">${pct}</div>
     <div class="pair-track-info">
@@ -1045,6 +1048,8 @@ function topPairHTML(p, top, idx) {
   const matchBadge = p.key_match === 'same' ? 'badge-same' : p.key_match === 'adjacent' ? 'badge-adjacent' : 'badge-relative';
   const matchLabel = p.key_match === 'same' ? 'SAME' : p.key_match === 'adjacent' ? 'ADJ' : 'REL';
   const bpmBadge = p.bpm_match === 'double' ? '<span class="badge-match badge-bpm" style="background:rgba(0,212,255,0.15);color:var(--cyan)">2x</span>' : p.bpm_match === 'half' ? '<span class="badge-match badge-bpm" style="background:rgba(0,212,255,0.15);color:var(--cyan)">&frac12;x</span>' : '';
+  const varBpmBadge = (p.warnings && p.warnings.includes('variable_bpm'))
+    ? '<span class="badge-warn" style="font-size:9px;padding:2px 5px">VAR BPM</span>' : '';
   return `<div class="top-pair-card" style="top:${top}px" onclick="showDetailFromTop(${idx})">
     <div class="pair-score ${scoreClass}">${pct}</div>
     <div class="top-pair-tracks">
@@ -1068,7 +1073,7 @@ function topPairHTML(p, top, idx) {
     </div>
     <div class="pair-badges" style="flex-direction:column;gap:4px">
       <span class="badge-match ${matchBadge}">${matchLabel}</span>
-      ${bpmBadge}
+      ${bpmBadge}${varBpmBadge}
     </div>
     <button class="pair-info-btn" onclick="event.stopPropagation();showDetailFromTop(${idx})" title="Detail breakdown">i</button>
   </div>`;
@@ -1128,6 +1133,7 @@ function showDetailModal(trackA, trackB, p) {
   if (warns.includes('tuning')) badgesHTML += `<span class="modal-badge badge-warn">Tuning Mismatch: ${p.tuning_a}Hz vs ${p.tuning_b}Hz</span>`;
   if (warns.includes('energy')) badgesHTML += `<span class="modal-badge badge-warn">Energy Gap: ${p.energy_diff}dB</span>`;
   if (warns.includes('grid')) badgesHTML += `<span class="modal-badge badge-warn">Grid Mismatch</span>`;
+  if (warns.includes('variable_bpm')) badgesHTML += `<span class="modal-badge badge-warn">Variable BPM</span>`;
 
   const matchLabel = p.key_match === 'same' ? 'Same Key' : p.key_match === 'adjacent' ? 'Adjacent Key' : 'Relative Key';
   const bpmLabel = p.bpm_match === 'direct' ? `Δ${p.bpm_diff} BPM` : p.bpm_match === 'double' ? 'Double Time' : 'Half Time';
@@ -1303,6 +1309,30 @@ function esc(s) {
   const d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
+}
+async function triggerImport() {
+  const btn = document.getElementById('importBtn');
+  const status = document.getElementById('importStatus');
+  btn.textContent = '↻ Syncing...';
+  btn.disabled = true;
+  status.style.display = 'none';
+  try {
+    const data = await fetch('/api/import', { method: 'POST' }).then(r => r.json());
+    status.textContent = `+${data.added} added, ${data.updated} updated, ${data.removed} removed`;
+    status.style.display = 'block';
+    if (data.added || data.updated || data.removed) {
+      const res = await api('/api/tracks?limit=99999');
+      allTracks = res.tracks;
+      document.getElementById('trackCount').textContent = allTracks.length.toLocaleString();
+      applyFiltersAndSort();
+      if (currentMode === 'top') loadTopPairs();
+    }
+  } catch(e) {
+    status.textContent = 'Import failed';
+    status.style.display = 'block';
+  }
+  btn.textContent = '↻ Import';
+  btn.disabled = false;
 }
 </script>
 </body>
