@@ -21,10 +21,15 @@ def test_tracks_has_required_columns():
     try:
         conn = init_db(path)
         cols = {r[1] for r in conn.execute("PRAGMA table_info(tracks)")}
-        for col in ["name", "artist", "camelot", "bpm", "bpm_stability",
-                    "bpm_segments", "beats_blob", "waveform_colors",
-                    "transient_pos", "transient_energy", "source",
-                    "persistent_id", "file_path", "file_mtime"]:
+        for col in ["id", "name", "artist", "duration", "source", "persistent_id",
+                    "quality", "camelot", "key_name", "key_conf", "second_key",
+                    "tuning", "bpm", "analyzed_bpm", "bpm_conf", "straight",
+                    "forced_straight", "grid_dev", "first_downbeat",
+                    "time_signature", "beat_count", "bpm_stability",
+                    "bpm_segment_count", "bpm_segments", "energy", "dyn_range",
+                    "transient_count", "waveform_low", "waveform_max",
+                    "waveform_colors", "beats_blob", "transient_pos",
+                    "transient_energy", "file_path", "file_mtime"]:
             assert col in cols, f"Missing column: {col}"
         conn.close()
     finally:
@@ -37,7 +42,11 @@ def test_top_pairs_has_required_columns():
     try:
         conn = init_db(path)
         cols = {r[1] for r in conn.execute("PRAGMA table_info(top_pairs)")}
-        for col in ["track_a_id", "track_b_id", "score", "warnings", "second_key_match"]:
+        for col in ["id", "track_a_id", "track_b_id", "score", "bpm_diff",
+                    "bpm_match", "key_match", "energy_diff", "grid_match",
+                    "tuning_diff", "dr_diff", "warnings", "bpm_score",
+                    "key_score", "energy_score", "grid_score", "dr_score",
+                    "tuning_score", "conf_score", "second_key_match"]:
             assert col in cols, f"Missing column: {col}"
         conn.close()
     finally:
