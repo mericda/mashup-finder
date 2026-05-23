@@ -1,0 +1,56 @@
+import os, tempfile
+from db import init_db
+
+
+def test_init_creates_tables():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+    try:
+        conn = init_db(path)
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert "tracks" in tables
+        assert "top_pairs" in tables
+        conn.close()
+    finally:
+        os.unlink(path)
+
+
+def test_tracks_has_required_columns():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+    try:
+        conn = init_db(path)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(tracks)")}
+        for col in ["name", "artist", "camelot", "bpm", "bpm_stability",
+                    "bpm_segments", "beats_blob", "waveform_colors",
+                    "transient_pos", "transient_energy", "source",
+                    "persistent_id", "file_path", "file_mtime"]:
+            assert col in cols, f"Missing column: {col}"
+        conn.close()
+    finally:
+        os.unlink(path)
+
+
+def test_top_pairs_has_required_columns():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+    try:
+        conn = init_db(path)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(top_pairs)")}
+        for col in ["track_a_id", "track_b_id", "score", "warnings", "second_key_match"]:
+            assert col in cols, f"Missing column: {col}"
+        conn.close()
+    finally:
+        os.unlink(path)
+
+
+def test_init_idempotent():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+    try:
+        conn = init_db(path)
+        conn.close()
+        conn2 = init_db(path)  # must not raise
+        conn2.close()
+    finally:
+        os.unlink(path)
