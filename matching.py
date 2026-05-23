@@ -176,11 +176,11 @@ def find_pairs_for_track(track, tracks_by_id, key_groups, bpm_range=6, limit=200
     return pairs[:limit]
 
 
-def precompute_top_pairs(tracks, key_groups, top_n=500):
+def precompute_top_pairs(tracks, key_groups, top_n=500, bpm_range=6):
     tracks_by_id = {t["id"]: t for t in tracks}
     heap, seen = [], set()
     for t in tracks:
-        for p in find_pairs_for_track(t, tracks_by_id, key_groups, bpm_range=6, limit=10):
+        for p in find_pairs_for_track(t, tracks_by_id, key_groups, bpm_range=bpm_range, limit=10):
             oid = p["track"]["id"]
             canon = (min(t["id"], oid), max(t["id"], oid))
             if canon in seen:
