@@ -40,6 +40,16 @@ def test_compute_bpm_stability_too_few():
     assert _compute_bpm_stability([1.0]) == 0.0
 
 
+def test_compute_bpm_stability_two_beats():
+    # 2 beats → 1 interval → stdev undefined → must return 0.0, not crash
+    assert _compute_bpm_stability([0.0, 0.5]) == 0.0
+
+
+def test_compute_bpm_stability_three_beats():
+    # 3 beats → 2 intervals → stdev defined
+    assert _compute_bpm_stability([0.0, 0.5, 1.0]) == 0.0  # perfectly regular
+
+
 def test_parse_bpm_segments():
     result = _parse_bpm_segments(_make_blob([0.2, 60.0]), _make_blob([128.0, 130.0]))
     assert len(result) == 2

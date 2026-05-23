@@ -29,7 +29,7 @@ def _decode_float32_blob(blob):
 
 
 def _compute_bpm_stability(beat_times):
-    if len(beat_times) < 3:
+    if len(beat_times) < 4:
         return 0.0
     intervals = [beat_times[i + 1] - beat_times[i] for i in range(len(beat_times) - 1)]
     return round(stdev(intervals), 6)
@@ -175,31 +175,30 @@ def run_sync(db_path=DEFAULT_DB_PATH, metadata_dir=METADATA_DIR):
     on_disk = set(glob.glob(os.path.join(metadata_dir, "**", "*.djayMetadata"), recursive=True))
     added = updated = removed = skipped = 0
 
-    for path in on_disk:
-        mtime = os.path.getmtime(path)
-        if path in existing:
-            if abs(mtime - existing[path][1]) < 0.01:
-                continue
-            track = parse_plist_file(path)
-            if track:
-                _upsert_track(conn, track)
-                updated += 1
+    with conn:  # batch all upserts/deletes in one transaction
+        for path in on_disk:
+            mtime = os.path.getmtime(path)
+            if path in existing:
+                if abs(mtime - existing[path][1]) < 0.01:
+                    continue
+                track = parse_plist_file(path)
+                if track:
+                    _upsert_track(conn, track)
+                    updated += 1
+                else:
+                    skipped += 1
             else:
-                skipped += 1
-        else:
-            track = parse_plist_file(path)
-            if track:
-                _upsert_track(conn, track)
-                added += 1
-            else:
-                skipped += 1
+                track = parse_plist_file(path)
+                if track:
+                    _upsert_track(conn, track)
+                    added += 1
+                else:
+                    skipped += 1
 
-    for path, (track_id, _) in existing.items():
-        if path not in on_disk:
-            conn.execute("DELETE FROM tracks WHERE id=?", [track_id])
-            removed += 1
-
-    conn.commit()
+        for path, (track_id, _) in existing.items():
+            if path not in on_disk:
+                conn.execute("DELETE FROM tracks WHERE id=?", [track_id])
+                removed += 1
 
     if added or updated or removed:
         _recompute_top_pairs(conn)
