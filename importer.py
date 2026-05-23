@@ -29,11 +29,9 @@ def _decode_float32_blob(blob):
 
 
 def _compute_bpm_stability(beat_times):
-    if len(beat_times) < 2:
+    if len(beat_times) < 3:
         return 0.0
     intervals = [beat_times[i + 1] - beat_times[i] for i in range(len(beat_times) - 1)]
-    if len(intervals) < 2:
-        return 0.0
     return round(stdev(intervals), 6)
 
 
@@ -113,15 +111,26 @@ def parse_plist_file(path):
     }
 
 
+TRACK_COLS = [
+    "name", "artist", "duration", "source", "persistent_id", "quality",
+    "camelot", "key_name", "key_conf", "second_key", "tuning", "bpm",
+    "analyzed_bpm", "bpm_conf", "straight", "forced_straight", "grid_dev",
+    "first_downbeat", "time_signature", "beat_count", "bpm_stability",
+    "bpm_segment_count", "bpm_segments", "energy", "dyn_range",
+    "transient_count", "waveform_low", "waveform_max", "waveform_colors",
+    "beats_blob", "transient_pos", "transient_energy", "file_mtime",
+]
+
+_UPSERT_SQL = (
+    f"INSERT INTO tracks (file_path, {', '.join(TRACK_COLS)}) "
+    f"VALUES (?, {', '.join('?' for _ in TRACK_COLS)}) "
+    f"ON CONFLICT(file_path) DO UPDATE SET "
+    f"{', '.join(f'{c}=excluded.{c}' for c in TRACK_COLS)}"
+)
+
+
 def _upsert_track(conn, track):
-    cols = [c for c in track if c != "file_path"]
-    sql = f"""
-        INSERT INTO tracks (file_path, {', '.join(cols)})
-        VALUES (?, {', '.join('?' for _ in cols)})
-        ON CONFLICT(file_path) DO UPDATE SET
-        {', '.join(f'{c}=excluded.{c}' for c in cols)}
-    """
-    conn.execute(sql, [track["file_path"]] + [track[c] for c in cols])
+    conn.execute(_UPSERT_SQL, [track["file_path"]] + [track.get(c) for c in TRACK_COLS])
 
 
 def _recompute_top_pairs(conn):
@@ -134,28 +143,28 @@ def _recompute_top_pairs(conn):
     key_groups = build_key_groups(tracks)
     top = precompute_top_pairs(tracks, key_groups, top_n=500)
 
-    conn.execute("DELETE FROM top_pairs")
-    for p in top:
-        conn.execute("""
-            INSERT INTO top_pairs
-            (track_a_id, track_b_id, score, bpm_diff, bpm_match, key_match,
-             energy_diff, grid_match, tuning_diff, dr_diff, warnings,
-             bpm_score, key_score, energy_score, grid_score, dr_score,
-             tuning_score, conf_score, second_key_match)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        """, [
-            p["track_a"]["id"], p["track_b"]["id"],
-            p["score"], p["bpm_diff"], p["bpm_match"], p["key_match"],
-            p["energy_diff"], int(p["grid_match"]), p["tuning_diff"], p["dr_diff"],
-            json.dumps(p["warnings"]),
-            p["bpm_score"], p["key_score"], p["energy_score"], p["grid_score"],
-            p["dr_score"], p["tuning_score"], p["conf_score"], int(p["second_key_match"]),
-        ])
-    conn.commit()
+    with conn:  # atomic: if anything fails, delete is rolled back
+        conn.execute("DELETE FROM top_pairs")
+        for p in top:
+            conn.execute("""
+                INSERT INTO top_pairs
+                (track_a_id, track_b_id, score, bpm_diff, bpm_match, key_match,
+                 energy_diff, grid_match, tuning_diff, dr_diff, warnings,
+                 bpm_score, key_score, energy_score, grid_score, dr_score,
+                 tuning_score, conf_score, second_key_match)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """, [
+                p["track_a"]["id"], p["track_b"]["id"],
+                p["score"], p["bpm_diff"], p["bpm_match"], p["key_match"],
+                p["energy_diff"], int(p["grid_match"]), p["tuning_diff"], p["dr_diff"],
+                json.dumps(p["warnings"]),
+                p["bpm_score"], p["key_score"], p["energy_score"], p["grid_score"],
+                p["dr_score"], p["tuning_score"], p["conf_score"], int(p["second_key_match"]),
+            ])
 
 
-def run_sync(db_path=DEFAULT_DB_PATH):
-    """Sync Djay Pro metadata -> SQLite. Returns {added, updated, removed}."""
+def run_sync(db_path=DEFAULT_DB_PATH, metadata_dir=METADATA_DIR):
+    """Sync Djay Pro metadata -> SQLite. Returns {added, updated, removed, skipped}."""
     conn = init_db(db_path)
 
     existing = {
@@ -163,8 +172,8 @@ def run_sync(db_path=DEFAULT_DB_PATH):
         for r in conn.execute("SELECT id, file_path, file_mtime FROM tracks")
     }
 
-    on_disk = set(glob.glob(os.path.join(METADATA_DIR, "**", "*.djayMetadata"), recursive=True))
-    added = updated = removed = 0
+    on_disk = set(glob.glob(os.path.join(metadata_dir, "**", "*.djayMetadata"), recursive=True))
+    added = updated = removed = skipped = 0
 
     for path in on_disk:
         mtime = os.path.getmtime(path)
@@ -175,11 +184,15 @@ def run_sync(db_path=DEFAULT_DB_PATH):
             if track:
                 _upsert_track(conn, track)
                 updated += 1
+            else:
+                skipped += 1
         else:
             track = parse_plist_file(path)
             if track:
                 _upsert_track(conn, track)
                 added += 1
+            else:
+                skipped += 1
 
     for path, (track_id, _) in existing.items():
         if path not in on_disk:
@@ -192,4 +205,4 @@ def run_sync(db_path=DEFAULT_DB_PATH):
         _recompute_top_pairs(conn)
 
     conn.close()
-    return {"added": added, "updated": updated, "removed": removed}
+    return {"added": added, "updated": updated, "removed": removed, "skipped": skipped}

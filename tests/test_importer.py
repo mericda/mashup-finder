@@ -75,3 +75,26 @@ def test_run_sync_idempotent(tmp_path):
     assert r2["added"] == 0
     assert r2["updated"] == 0
     assert r2["removed"] == 0
+
+
+def test_run_sync_with_fake_metadata(tmp_path):
+    import plistlib
+    # Create a minimal valid .djayMetadata plist
+    meta_dir = tmp_path / "meta"
+    meta_dir.mkdir()
+    plist_data = {
+        "info": {"Name": "Test Track", "Artist": "Test Artist", "Duration": 200, "source": 1},
+        "keyInfo": {"keyIndex": 0, "keyConfidence": 0.9, "keyReferenceTuning": 440.0},
+        "deepBeatTrackerInfo": {"bpm": 128.0, "bpmConfidence": 0.8, "straightGrid": True,
+                                "straightGridDistance": 0.05, "firstDownBeatIndex": 0,
+                                "timeSignatureIndex": 4},
+        "newGainInfo": {"AutoTitleGain": -10.0, "AutoTitleGainLoudnessRange": 6.0},
+    }
+    plist_path = meta_dir / "test.djayMetadata"
+    with open(plist_path, "wb") as f:
+        plistlib.dump(plist_data, f)
+
+    db_path = str(tmp_path / "test.db")
+    result = run_sync(db_path, metadata_dir=str(meta_dir))
+    assert result["added"] == 1
+    assert result["skipped"] == 0
