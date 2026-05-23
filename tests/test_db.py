@@ -1,5 +1,5 @@
 import os, tempfile
-from db import init_db
+from db import init_db, get_conn
 
 
 def test_init_creates_tables():
@@ -61,5 +61,43 @@ def test_init_idempotent():
         conn.close()
         conn2 = init_db(path)  # must not raise
         conn2.close()
+    finally:
+        os.unlink(path)
+
+
+def test_get_conn_row_factory():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+    try:
+        conn = init_db(path)
+        conn.execute("INSERT INTO tracks (name, artist) VALUES ('Test', 'Artist')")
+        conn.commit()
+        conn.close()
+        conn2 = get_conn(path)
+        row = conn2.execute("SELECT name, artist FROM tracks").fetchone()
+        assert row["name"] == "Test"  # sqlite3.Row dict-like access
+        conn2.close()
+    finally:
+        os.unlink(path)
+
+
+def test_on_delete_cascade():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+    try:
+        conn = init_db(path)
+        conn.execute("INSERT INTO tracks (name, artist, file_path) VALUES ('T', 'A', '/fake/path')")
+        conn.commit()
+        track_id = conn.execute("SELECT id FROM tracks").fetchone()["id"]
+        conn.execute(
+            "INSERT INTO top_pairs (track_a_id, track_b_id, score) VALUES (?, ?, ?)",
+            [track_id, track_id, 0.9]
+        )
+        conn.commit()
+        conn.execute("DELETE FROM tracks WHERE id=?", [track_id])
+        conn.commit()
+        count = conn.execute("SELECT COUNT(*) FROM top_pairs").fetchone()[0]
+        assert count == 0  # CASCADE deleted the pair
+        conn.close()
     finally:
         os.unlink(path)

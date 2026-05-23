@@ -62,7 +62,8 @@ CREATE TABLE IF NOT EXISTS top_pairs (
     dr_score         REAL,
     tuning_score     REAL,
     conf_score       REAL,
-    second_key_match INTEGER
+    second_key_match INTEGER,
+    UNIQUE(track_a_id, track_b_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_tracks_camelot ON tracks(camelot);
@@ -71,17 +72,22 @@ CREATE INDEX IF NOT EXISTS idx_top_pairs_score ON top_pairs(score DESC);
 """
 
 
+def _open(path):
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
 def init_db(path=DEFAULT_DB_PATH):
     """Create DB file + schema if needed. Returns open connection."""
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
+    conn = _open(path)
     conn.executescript(_SCHEMA)
     conn.commit()
     return conn
 
 
 def get_conn(path=DEFAULT_DB_PATH):
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Open an existing DB. Returns connection with row_factory=sqlite3.Row."""
+    return _open(path)
